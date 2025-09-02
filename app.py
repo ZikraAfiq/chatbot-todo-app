@@ -91,28 +91,6 @@ def deleteTask(task_key: str):
     tasks.remove(target)
     return {"status": "success", "task": target, "message": f"Deleted '{target['title']}'."}
 
-def find_task_by_name_or_id(tasks, user_input):
-    user_input = user_input.lower().strip()
-    
-    # 1. If user input is a number → match by ID
-    if user_input.isdigit():
-        for task in tasks:
-            if str(task["id"]) == user_input:
-                return task
-
-    # 2. Exact match first
-    for task in tasks:
-        if task["title"].lower() == user_input:
-            return task
-
-    # 3. Partial match (longest substring first)
-    matches = sorted(
-        [task for task in tasks if user_input in task["title"].lower()],
-        key=lambda t: len(t["title"]),
-        reverse=True
-    )
-    return matches[0] if matches else None
-
 available_functions = {
     "addTask": addTask,
     "viewTasks": viewTasks,
@@ -176,7 +154,6 @@ def chat():
 
     messages = [{"role": "user", "content": user_input}]
 
-    # First OpenAI call
     try:
         response = openai.ChatCompletion.create(
             model=MODEL,
@@ -189,11 +166,9 @@ def chat():
 
     response_message = response["choices"][0]["message"]
 
-    # If function call detected
     if response_message.get("function_call"):
         func_name = response_message["function_call"]["name"]
         raw_args = response_message["function_call"].get("arguments", "{}")
-
         try:
             func_args = json.loads(raw_args)
         except Exception:
@@ -204,17 +179,6 @@ def chat():
             assistant_reply = f"Requested function {func_name} is not available."
             return jsonify({"reply": assistant_reply}), 200
 
-        # ✅ FIX: Handle deleteTask & completeTask when AI sends a string instead of an ID
-        if func_name in ["deleteTask", "completeTask"]:
-            task_id = func_args.get("task_id")
-            if isinstance(task_id, str):  # AI sent a name, not an ID
-                matched_task = find_task_by_name_or_id(task_id)
-                if matched_task:
-                    func_args["task_id"] = matched_task["id"]
-                else:
-                    return jsonify({"reply": f"Sorry, I couldn't find a task matching '{task_id}'."}), 200
-
-        # Execute the function
         try:
             result = func(**func_args)
             function_content = json.dumps(result)
@@ -224,7 +188,6 @@ def chat():
         messages.append(response_message)
         messages.append({"role": "function", "name": func_name, "content": function_content})
 
-        # Second OpenAI call (to generate natural response)
         try:
             second_response = openai.ChatCompletion.create(
                 model=MODEL,
@@ -233,11 +196,9 @@ def chat():
             assistant_reply = second_response["choices"][0]["message"]["content"]
         except Exception as e:
             assistant_reply = json.dumps({"status": "error", "message": f"OpenAI second call failed: {e}"})
-
         return jsonify({"reply": assistant_reply, "function_result": json.loads(function_content)}), 200
 
     return jsonify({"reply": response_message.get("content")}), 200
-
 
 @app.route("/", methods=["GET"])
 def index():
